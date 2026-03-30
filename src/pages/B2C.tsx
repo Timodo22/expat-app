@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Building2, CheckCircle2, FileText, MessageCircle, LogOut, Settings } from 'lucide-react';
+import { CheckCircle2, FileText, MessageCircle, LogOut, Settings } from 'lucide-react';
 import { authClient, API_URL } from '../lib/authClient';
-import SettingsModal from '../components/SettingsModal'; // Check of dit pad klopt voor jouw structuur!
+import SettingsModal from '../components/SettingsModal'; 
+import logoEH from '../assets/logoEH.png'; // Jouw logo toegevoegd
 
 export default function B2CPortal() {
   const [user, setUser] = useState<{ id: string; name: string; email: string } | null>(null);
@@ -53,13 +54,20 @@ export default function B2CPortal() {
       {/* Header */}
       <header className="bg-white border-b border-gray-100 px-8 py-4 flex items-center justify-between sticky top-0 z-10">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-[#0C3C4C] rounded-xl flex items-center justify-center">
-            <Building2 size={18} className="text-white" />
+          {/* Logo in plaats van het oude icoontje */}
+          <img src={logoEH} alt="EH Logo" className="h-10 w-auto object-contain" />
+          
+          <div className="flex flex-col">
+            <span className="font-bold text-[#0C3C4C] text-lg tracking-tight">
+              EXPAT HOUSING BRAINPORT <span className="text-gray-400 font-normal">| B2C Portal</span>
+            </span>
+            {/* Slogan toegevoegd */}
+            <span className="text-xs text-[#84B5A5] font-medium tracking-wide">
+              Where international talent finds home
+            </span>
           </div>
-          <span className="font-semibold text-[#0C3C4C] text-lg tracking-tight">
-            Expat Housing <span className="text-gray-400 font-normal">| B2C Portal</span>
-          </span>
         </div>
+        
         <div className="flex items-center gap-4">
           <span className="text-sm font-medium text-gray-600">
             {user?.name || 'Expat'}

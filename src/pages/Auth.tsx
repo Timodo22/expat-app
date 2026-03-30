@@ -1,9 +1,19 @@
 // components/Auth.tsx
 import React, { useState, useRef } from 'react';
-import { Building2, ShieldAlert } from 'lucide-react';
+import { ShieldAlert } from 'lucide-react';
 import { authClient, API_URL } from '../lib/authClient';
+import logoEH from '../assets/logoEH.png';
 
 type View = 'login' | 'register' | 'verify' | 'admin' | 'forgot-password' | 'reset-password';
+
+// ── Eigen Logo Component ───────────────────────────────────────────────────
+const MyLogo = ({ className = "" }: { className?: string }) => (
+  <img 
+    src={logoEH} 
+    alt="EH Logo" 
+    className={`object-contain h-24 w-auto ${className}`} 
+  />
+);
 
 export default function Auth() {
   const [view, setView] = useState<View>('login');
@@ -139,9 +149,7 @@ export default function Auth() {
         <div className="max-w-md w-full bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
 
           <div className="flex justify-center mb-6">
-            <div className="w-12 h-12 rounded-xl bg-[#0C3C4C] flex items-center justify-center">
-              <Building2 size={24} className="text-white" />
-            </div>
+            <MyLogo />
           </div>
 
           <h2 className="text-2xl font-bold text-center text-[#0C3C4C] mb-2">
@@ -208,9 +216,13 @@ export default function Auth() {
       <div className="max-w-md w-full bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
 
         <div className="flex justify-center mb-6">
-          <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${isAdmin ? 'bg-red-600' : 'bg-[#0C3C4C]'}`}>
-            {isAdmin ? <ShieldAlert size={24} className="text-white" /> : <Building2 size={24} className="text-white" />}
-          </div>
+          {isAdmin ? (
+            <div className="w-12 h-12 rounded-xl bg-red-600 flex items-center justify-center">
+              <ShieldAlert size={24} className="text-white" />
+            </div>
+          ) : (
+            <MyLogo />
+          )}
         </div>
 
         <h2 className="text-2xl font-bold text-center text-[#0C3C4C] mb-6">
