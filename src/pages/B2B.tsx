@@ -7,7 +7,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Building2, LogOut, Settings, Users, ChevronRight, ChevronLeft,
   Check, PenLine, RotateCcw, ArrowLeft, UserPlus, Briefcase,
-  Calendar, MapPin, Clock,
+  Calendar, MapPin, Clock, FileText, Upload, RefreshCw, XCircle, AlertCircle
 } from 'lucide-react';
 import { authClient, getToken, API_URL } from '../lib/authClient';
 import SettingsModal from '../components/SettingsModal';
@@ -109,6 +109,37 @@ const defaultIntake: IntakeFormData = {
   partnerCompanyName: '', partnerCompanyWebsite: '',
   signatureData: '', termsAccepted: false,
 };
+
+type DocStatus = 'pending' | 'approved' | 'rejected';
+
+interface Document {
+  id: string;
+  document_type: string;
+  original_name: string;
+  file_size: number;
+  status: DocStatus;
+  rejection_reason: string | null;
+}
+
+// ─── Shared configurations ────────────────────────────────────────────────────
+
+const DOCUMENT_TYPES = [
+  { key: 'passport_id_card', label: 'Passport / ID Card', desc: 'Valid passport or ID' },
+  { key: 'recent_payslip', label: 'Recent Payslip', desc: 'Payslip from the last 3 months' },
+  { key: 'employment_contract', label: 'Employment Contract', desc: 'Current contract or employer statement' },
+];
+
+const DOC_STATUS_CONFIG: Record<DocStatus, { label: string; icon: React.ReactNode; classes: string; bg: string }> = {
+  pending:  { label: 'Pending', icon: <Clock size={14} />, classes: 'text-amber-700 border-amber-200', bg: 'bg-amber-50' },
+  approved: { label: 'Approved', icon: <Check size={14} />, classes: 'text-green-700 border-green-200', bg: 'bg-green-50' },
+  rejected: { label: 'Rejected', icon: <XCircle size={14} />, classes: 'text-red-700 border-red-200', bg: 'bg-red-50' },
+};
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 // ─── Shared field components ───────────────────────────────────────────────────
 
@@ -306,6 +337,147 @@ const StatusBadge = ({ status }: { status: string }) => {
   );
 };
 
+// ─── Employee Documents View (NIEUW) ──────────────────────────────────────────
+
+function EmployeeDocumentsView({ employee, onBack }: { employee: Employee; onBack: () => void }) {
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [uploading, setUploading] = useState<string | null>(null);
+
+  const fetchDocs = useCallback(async () => {
+    const token = getToken();
+    if (!token) return;
+    try {
+      // Haal specifieke documenten op voor dit intake_id
+      const res = await fetch(`${API_URL}/api/documents/my-documents?intake_id=${employee.id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) setDocuments(await res.json());
+    } catch (err) {
+      console.error('Failed to fetch documents', err);
+    }
+  }, [employee.id]);
+
+  useEffect(() => {
+    fetchDocs();
+  }, [fetchDocs]);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, docType: string) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const file = e.target.files[0];
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('document_type', docType);
+    formData.append('intake_id', employee.id); // Koppel aan juiste werknemer
+
+    setUploading(docType);
+    try {
+      const res = await fetch(`${API_URL}/api/documents/upload`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${getToken()}` },
+        body: formData,
+      });
+      if (res.ok) await fetchDocs();
+      else {
+        const err = await res.json();
+        alert(err.error || 'Upload failed.');
+      }
+    } catch {
+      alert('Network error during upload.');
+    } finally {
+      setUploading(null);
+      e.target.value = '';
+    }
+  };
+
+  const approvedCount = documents.filter(d => d.status === 'approved').length;
+
+  return (
+    <div className="min-h-screen bg-[#F9FAFB] flex flex-col">
+      <header className="bg-white border-b border-gray-100 px-8 py-4 flex items-center gap-3 sticky top-0 z-10">
+        <button onClick={onBack} className="p-2 text-gray-400 hover:text-[#0C3C4C] transition-colors rounded-lg hover:bg-gray-50">
+          <ArrowLeft size={18} />
+        </button>
+        <div className="flex flex-col">
+          <span className="font-semibold text-[#0C3C4C] text-lg tracking-tight">
+            Documents: {employee.first_name} {employee.surname}
+          </span>
+          <span className="text-xs text-gray-400">Manage required files for this employee</span>
+        </div>
+      </header>
+
+      <main className="flex-1 max-w-3xl w-full mx-auto p-8">
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h3 className="text-lg font-semibold text-[#0C3C4C]">Required Documents</h3>
+              <p className="text-sm text-gray-500">{approvedCount}/3 approved</p>
+            </div>
+            <button onClick={fetchDocs} className="p-2 text-gray-400 hover:text-[#0C3C4C] transition-colors rounded-lg bg-gray-50">
+              <RefreshCw size={16} />
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            {DOCUMENT_TYPES.map(docType => {
+              const existing = documents.find(d => d.document_type === docType.key);
+              const isUploading = uploading === docType.key;
+              const statusCfg = existing ? DOC_STATUS_CONFIG[existing.status] : null;
+
+              return (
+                <div key={docType.key} className={`p-4 border rounded-2xl transition-colors ${existing?.status === 'approved' ? 'border-green-200 bg-green-50/30' : existing?.status === 'rejected' ? 'border-red-200 bg-red-50/20' : 'border-gray-100 hover:border-gray-200'}`}>
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${existing?.status === 'approved' ? 'bg-green-100' : existing?.status === 'rejected' ? 'bg-red-100' : 'bg-gray-50'}`}>
+                        <FileText size={20} className={existing?.status === 'approved' ? 'text-green-600' : existing?.status === 'rejected' ? 'text-red-500' : 'text-gray-400'} />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-medium text-gray-900">{docType.label}</p>
+                        <p className="text-xs text-gray-500">{docType.desc}</p>
+                        {existing && (
+                          <p className="text-xs text-gray-400 mt-0.5 truncate">{existing.original_name} · {formatBytes(existing.file_size)}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      {statusCfg && (
+                        <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border ${statusCfg.bg} ${statusCfg.classes}`}>
+                          {statusCfg.icon}
+                          {statusCfg.label}
+                        </span>
+                      )}
+
+                      {existing?.status !== 'approved' && (
+                        <div className="relative">
+                          <input
+                            type="file" id={`file-${docType.key}`} className="hidden"
+                            accept=".pdf,.jpg,.jpeg,.png"
+                            onChange={e => handleFileUpload(e, docType.key)} disabled={isUploading}
+                          />
+                          <label htmlFor={`file-${docType.key}`} className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium cursor-pointer transition-colors ${isUploading ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : existing ? 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200' : 'bg-[#0C3C4C] text-white hover:bg-[#0a2f3b]'}`}>
+                            {isUploading ? 'Uploading...' : existing ? <><RefreshCw size={13} /> Replace</> : <><Upload size={13} /> Upload</>}
+                          </label>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {existing?.status === 'rejected' && existing.rejection_reason && (
+                    <div className="mt-3 flex items-start gap-2 px-3 py-2 bg-red-50 border border-red-100 rounded-xl">
+                      <AlertCircle size={14} className="text-red-500 shrink-0 mt-0.5" />
+                      <p className="text-xs text-red-700"><strong>Reason:</strong> {existing.rejection_reason}</p>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
 // ─── Embedded Intake Form ─────────────────────────────────────────────────────
 
 function EmployeeIntakeForm({
@@ -387,7 +559,6 @@ function EmployeeIntakeForm({
     setError('');
     setLoading(true);
     try {
-      // ✅ FIX: use getToken() which reads the correct 'session_token' key
       const token = getToken();
       const res = await fetch(`${API_URL}/api/intake/submit-b2b`, {
         method: 'POST',
@@ -480,7 +651,7 @@ function EmployeeIntakeForm({
               <h3 className="text-xl font-bold text-[#0C3C4C] mb-2">Employee added successfully</h3>
               <p className="text-gray-500 text-sm">
                 The intake for <strong>{form.firstName} {form.surname}</strong> has been submitted
-                and is now visible in your dashboard and in the admin panel.
+                and is now visible in your dashboard. You can now upload their required documents.
               </p>
             </div>
             <div className="flex gap-3 pt-2">
@@ -494,7 +665,7 @@ function EmployeeIntakeForm({
                 onClick={onSuccess}
                 className="flex-1 bg-[#0C3C4C] text-white py-3 rounded-xl font-medium hover:bg-[#0a2f3b] transition-colors"
               >
-                Back to dashboard
+                Go to Dashboard
               </button>
             </div>
           </div>
@@ -645,7 +816,6 @@ function EmployeeIntakeForm({
             <div className="space-y-4">
               <SectionTitle title="Employment Details" subtitle="Employee's employment information" />
 
-              {/* Informational pill — no radio needed */}
               <div className="flex items-center gap-2 px-4 py-3 bg-[#0C3C4C]/5 border border-[#0C3C4C]/10 rounded-xl">
                 <Briefcase size={14} className="text-[#0C3C4C]" />
                 <span className="text-sm text-[#0C3C4C] font-medium">Employed</span>
@@ -851,12 +1021,13 @@ function IntakeHeader({ onBack }: { onBack: () => void }) {
   );
 }
 
-// ─── Main B2B Portal ──────────────────────────────────────────────────────────
+// ─── Main B2B Portal Router ───────────────────────────────────────────────────
 
-type PortalView = 'dashboard' | 'intake';
+type PortalView = 'dashboard' | 'intake' | 'documents';
 
 export default function B2BPortal() {
   const [view, setView] = useState<PortalView>('dashboard');
+  const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -877,15 +1048,11 @@ export default function B2BPortal() {
   const fetchEmployees = async () => {
     setLoadingEmployees(true);
     try {
-      // ✅ FIX: use getToken() which reads the correct 'session_token' key
       const token = getToken();
       const res = await fetch(`${API_URL}/api/b2b/my-intakes`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (res.ok) {
-        const data = await res.json() as Employee[];
-        setEmployees(data);
-      }
+      if (res.ok) setEmployees(await res.json());
     } catch (err) {
       console.error('Could not fetch employees', err);
     } finally {
@@ -897,13 +1064,22 @@ export default function B2BPortal() {
     fetchEmployees();
   }, []);
 
-  // ── Show intake form ──
+  // ── Route Views ──
   if (view === 'intake') {
     return (
       <EmployeeIntakeForm
         companyName={user?.name ?? 'Your Company'}
         onBack={() => setView('dashboard')}
         onSuccess={() => { fetchEmployees(); setView('dashboard'); }}
+      />
+    );
+  }
+
+  if (view === 'documents' && selectedEmployee) {
+    return (
+      <EmployeeDocumentsView
+        employee={selectedEmployee}
+        onBack={() => { setSelectedEmployee(null); setView('dashboard'); }}
       />
     );
   }
@@ -919,19 +1095,14 @@ export default function B2BPortal() {
               EXPAT HOUSING BRAINPORT{' '}
               <span className="text-gray-400 font-normal">| Corporate Portal</span>
             </span>
-            <span className="text-xs text-[#84B5A5] font-medium tracking-wide">
-              Where international talent finds home
-            </span>
           </div>
         </div>
         <div className="flex items-center gap-4">
           <span className="text-sm font-medium text-gray-600">{user?.name ?? 'HR Department'}</span>
-          <button onClick={() => setShowSettings(true)}
-            className="p-2 text-gray-400 hover:text-[#0C3C4C] transition-colors" title="Settings">
+          <button onClick={() => setShowSettings(true)} className="p-2 text-gray-400 hover:text-[#0C3C4C] transition-colors">
             <Settings size={20} />
           </button>
-          <button onClick={handleLogout}
-            className="p-2 text-gray-400 hover:text-red-500 transition-colors" title="Log out">
+          <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-colors">
             <LogOut size={20} />
           </button>
         </div>
@@ -941,7 +1112,7 @@ export default function B2BPortal() {
         <div className="flex justify-between items-end mb-8">
           <div>
             <h1 className="text-3xl font-bold text-[#0C3C4C] tracking-tight">Corporate Dashboard</h1>
-            <p className="text-gray-500 mt-1">Manage your employees' relocation processes.</p>
+            <p className="text-gray-500 mt-1">Manage your employees' relocation processes and documents.</p>
           </div>
           <button
             onClick={() => setView('intake')}
@@ -952,34 +1123,6 @@ export default function B2BPortal() {
           </button>
         </div>
 
-        {/* Stats strip */}
-        <div className="grid grid-cols-3 gap-4 mb-6">
-          {[
-            { icon: <Users size={18} />, label: 'Total Employees', value: employees.length },
-            {
-              icon: <Clock size={18} />,
-              label: 'Pending',
-              value: employees.filter(e => e.status === 'getekend').length,
-            },
-            {
-              icon: <Check size={18} />,
-              label: 'Completed',
-              value: employees.filter(e => e.status === 'afgerond').length,
-            },
-          ].map(s => (
-            <div key={s.label} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex items-center gap-4">
-              <div className="w-10 h-10 bg-[#0C3C4C]/8 rounded-xl flex items-center justify-center text-[#0C3C4C]">
-                {s.icon}
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-[#0C3C4C]">{s.value}</p>
-                <p className="text-xs text-gray-500">{s.label}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Employee table */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
           <h3 className="text-lg font-semibold text-[#0C3C4C] mb-6">Active Cases</h3>
 
@@ -988,13 +1131,9 @@ export default function B2BPortal() {
               <div className="w-6 h-6 border-2 border-[#0C3C4C] border-t-transparent rounded-full animate-spin" />
             </div>
           ) : employees.length === 0 ? (
-            <div className="text-center py-12">
-              <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                <Users size={20} className="text-gray-400" />
-              </div>
-              <p className="text-gray-500 text-sm font-medium">No employees added yet</p>
-              <p className="text-gray-400 text-xs mt-1">Click "Add New Employee" to get started.</p>
-            </div>
+             <div className="text-center py-12">
+               <p className="text-gray-500 text-sm font-medium">No employees added yet</p>
+             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left">
@@ -1002,33 +1141,28 @@ export default function B2BPortal() {
                   <tr className="border-b border-gray-100 text-xs text-gray-400 uppercase tracking-wide">
                     <th className="pb-3 font-medium">Employee</th>
                     <th className="pb-3 font-medium">Email</th>
-                    <th className="pb-3 font-medium">Role</th>
-                    <th className="pb-3 font-medium">
-                      <span className="flex items-center gap-1"><Calendar size={12} /> Start date</span>
-                    </th>
+                    <th className="pb-3 font-medium"><span className="flex items-center gap-1"><Calendar size={12} /> Start date</span></th>
                     <th className="pb-3 font-medium">Status</th>
+                    <th className="pb-3 font-medium text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="text-sm divide-y divide-gray-50">
                   {employees.map(emp => (
                     <tr key={emp.id} className="hover:bg-gray-50/50 transition-colors">
-                      <td className="py-4 font-medium text-gray-900">
-                        {emp.first_name} {emp.surname}
-                      </td>
+                      <td className="py-4 font-medium text-gray-900">{emp.first_name} {emp.surname}</td>
                       <td className="py-4 text-gray-500">{emp.email}</td>
-                      <td className="py-4 text-gray-600">
-                        {emp.profession ?? (
-                          <span className="text-gray-300 italic">—</span>
-                        )}
+                      <td className="py-4 text-gray-500">
+                        {emp.desired_starting_date ? new Date(emp.desired_starting_date).toLocaleDateString('en-NL') : '—'}
                       </td>
-                      <td className="py-4 text-gray-500 flex items-center gap-1.5">
-                        <MapPin size={12} className="text-gray-300 shrink-0" />
-                        {emp.desired_starting_date
-                          ? new Date(emp.desired_starting_date).toLocaleDateString('en-NL', { day: '2-digit', month: 'short', year: 'numeric' })
-                          : <span className="text-gray-300 italic">—</span>}
-                      </td>
-                      <td className="py-4">
-                        <StatusBadge status={emp.status} />
+                      <td className="py-4"><StatusBadge status={emp.status} /></td>
+                      <td className="py-4 text-right">
+                        <button 
+                          onClick={() => { setSelectedEmployee(emp); setView('documents'); }}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-medium transition-colors"
+                        >
+                          <FileText size={14} />
+                          Documents
+                        </button>
                       </td>
                     </tr>
                   ))}

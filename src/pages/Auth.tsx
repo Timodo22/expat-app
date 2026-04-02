@@ -1,12 +1,12 @@
 // components/Auth.tsx
 import React, { useState, useRef } from 'react';
-import { ShieldAlert } from 'lucide-react';
+import { ShieldAlert, ArrowRight } from 'lucide-react';
 import { authClient, API_URL } from '../lib/authClient';
 import logoEH from '../assets/logoEH.png';
 
-type View = 'login' | 'register' | 'verify' | 'admin' | 'forgot-password' | 'reset-password';
+type View = 'login' | 'register' | 'verify' | 'admin' | 'admin-verify' | 'forgot-password' | 'reset-password';
 
-// ── Eigen Logo Component ───────────────────────────────────────────────────
+// ── Custom Logo Component ──────────────────────────────────────────────────
 const MyLogo = ({ className = "" }: { className?: string }) => (
   <img 
     src={logoEH} 
@@ -17,8 +17,7 @@ const MyLogo = ({ className = "" }: { className?: string }) => (
 
 export default function Auth() {
   const [view, setView] = useState<View>('login');
-  const [role, setRole] = useState<'b2c' | 'b2b'>('b2c');
-  const [name, setName] = useState('');
+  const [name, setName] = useState(''); // Used as "Company Name" during register
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState(['', '', '', '', '', '']);
@@ -66,6 +65,7 @@ export default function Auth() {
     reset();
 
     try {
+      // 1. ADMIN LOGIN (Step 1: check password, send email)
       if (view === 'admin') {
         const res = await fetch(`${API_URL}/api/admin/login`, {
           method: 'POST',
@@ -73,90 +73,117 @@ export default function Auth() {
           body: JSON.stringify({ email, password }),
         });
         const data = await res.json() as any;
-        if (!res.ok) throw new Error(data.error || 'Onjuiste admin inloggegevens.');
+        if (!res.ok) throw new Error(data.error || 'Incorrect admin credentials.');
         
+        setSuccess('Please check your email for the 6-digit 2FA code.');
+        switchView('admin-verify');
+        return;
+      }
+
+      // 2. ADMIN VERIFY (Step 2: check 2FA code)
+      if (view === 'admin-verify') {
+        if (codeValue.length < 6) { setError('Please enter all 6 digits.'); return; }
+        const res = await fetch(`${API_URL}/api/admin/verify-2fa`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, code: codeValue }),
+        });
+        const data = await res.json() as any;
+        if (!res.ok) throw new Error(data.error || 'Invalid code.');
+
         localStorage.setItem('authToken', data.token);
         if (data.user) localStorage.setItem('authUser', JSON.stringify(data.user));
 
-        setSuccess('Admin login succesvol! Bezig met doorsturen...');
+        setSuccess('2FA Successful! Redirecting...');
         setTimeout(() => (window.location.href = '/admin'), 1000);
         return;
       }
 
+      // 3. B2B REGISTRATION (Hardcoded role: 'b2b')
       if (view === 'register') {
-        const result = await authClient.register({ email, password, name, role });
+        const result = await authClient.register({ email, password, name, role: 'b2b' });
         if (!result.success) throw new Error(result.error);
         switchView('verify');
         return;
       }
 
+      // 4. NORMAL LOGIN (B2B or existing B2C)
       if (view === 'login') {
         const result = await authClient.login({ email, password });
         if (!result.success) {
-          if (result.error === 'E-mailadres nog niet geverifieerd.' || result.unverified) {
-             setError('Je e-mail is nog niet geverifieerd. Vul je code in.');
+          if (result.error === 'E-mailadres nog niet geverifieerd.' || result.unverified || result.error.includes('verified')) {
+             setError('Your email is not verified yet. Please enter your code.');
              switchView('verify');
              return;
           }
           throw new Error(result.error);
         }
-        setSuccess('Login succesvol! Bezig met doorsturen...');
+        setSuccess('Login successful! Redirecting...');
         const target = result.user?.role === 'b2b' ? '/portal/b2b' : '/portal/b2c';
         setTimeout(() => window.location.replace(target), 1000);
         return;
       }
 
+      // 5. EMAIL VERIFICATION (New accounts)
       if (view === 'verify') {
-        if (codeValue.length < 6) { setError('Voer alle 6 cijfers in.'); return; }
+        if (codeValue.length < 6) { setError('Please enter all 6 digits.'); return; }
         const result = await authClient.verifyCode({ email, code: codeValue });
         if (!result.success) throw new Error(result.error);
-        setSuccess('E-mailadres geverifieerd! Bezig met doorsturen...');
+        setSuccess('Email address verified! Redirecting...');
         const target = result.user?.role === 'b2b' ? '/portal/b2b' : '/portal/b2c';
         setTimeout(() => window.location.replace(target), 1000);
         return;
       }
 
+      // 6. FORGOT PASSWORD
       if (view === 'forgot-password') {
         const result = await authClient.forgotPassword(email);
         if (result.error) throw new Error(result.error);
         switchView('reset-password');
-        setSuccess('Als dit account bestaat, is er een code gestuurd naar je mail.');
+        setSuccess('If this account exists, a reset code has been sent to your email.');
         return;
       }
 
+      // 7. RESET PASSWORD
       if (view === 'reset-password') {
-        if (codeValue.length < 6) { setError('Voer alle 6 cijfers in.'); return; }
+        if (codeValue.length < 6) { setError('Please enter all 6 digits.'); return; }
         const result = await authClient.resetPassword({ email, code: codeValue, newPassword: password });
         if (result.error) throw new Error(result.error);
-        setSuccess('Wachtwoord succesvol gewijzigd! Je kunt nu inloggen.');
+        setSuccess('Password successfully changed! You can now log in.');
         switchView('login');
         return;
       }
 
     } catch (err: any) {
-      setError(err.message || 'Er is een onbekende fout opgetreden.');
+      setError(err.message || 'An unknown error occurred.');
     } finally {
       setLoading(false);
     }
   };
 
-  const isAdmin = view === 'admin';
+  const isAdmin = view === 'admin' || view === 'admin-verify';
 
   // ── Verify & Reset Screens (Code inputs) ───────────────────────────────────
-  if (view === 'verify' || view === 'reset-password') {
+  if (view === 'verify' || view === 'reset-password' || view === 'admin-verify') {
     return (
       <div className="min-h-screen bg-[#F9FAFB] flex flex-col items-center justify-center p-6">
         <div className="max-w-md w-full bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
 
           <div className="flex justify-center mb-6">
-            <MyLogo />
+            {view === 'admin-verify' ? (
+              <div className="w-12 h-12 rounded-xl bg-red-600 flex items-center justify-center">
+                <ShieldAlert size={24} className="text-white" />
+              </div>
+            ) : <MyLogo />}
           </div>
 
           <h2 className="text-2xl font-bold text-center text-[#0C3C4C] mb-2">
-            {view === 'verify' ? 'Voer je verificatiecode in' : 'Wachtwoord resetten'}
+            {view === 'reset-password' ? 'Reset Password' : 
+             view === 'admin-verify' ? 'Admin 2FA Verification' : 
+             'Enter your verification code'}
           </h2>
           <p className="text-center text-sm text-gray-500 mb-6">
-            We hebben een 6-cijferige code gestuurd naar<br />
+            We have sent a 6-digit code to<br />
             <strong>{email}</strong>
           </p>
 
@@ -178,7 +205,7 @@ export default function Auth() {
 
             {view === 'reset-password' && (
               <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Nieuw Wachtwoord</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
                 <input
                   type="password"
                   value={password}
@@ -192,18 +219,18 @@ export default function Auth() {
             <button
               type="submit"
               disabled={loading || codeValue.length < 6}
-              className="w-full bg-[#0C3C4C] text-white py-2 rounded-lg font-medium hover:bg-[#0a2f3b] transition-colors disabled:opacity-50"
+              className={`w-full text-white py-2 rounded-lg font-medium hover:opacity-90 transition-opacity disabled:opacity-50 ${view === 'admin-verify' ? 'bg-red-600' : 'bg-[#0C3C4C]'}`}
             >
-              {loading ? 'Bezig...' : view === 'verify' ? 'Verifieer code' : 'Wachtwoord opslaan'}
+              {loading ? 'Loading...' : view === 'reset-password' ? 'Save Password' : 'Verify code'}
             </button>
           </form>
 
           <button
             type="button"
-            onClick={() => switchView(view === 'verify' ? 'register' : 'login')}
+            onClick={() => switchView(view === 'admin-verify' ? 'admin' : view === 'verify' ? 'register' : 'login')}
             className="w-full mt-3 text-sm text-gray-400 hover:text-gray-600 transition-colors"
           >
-            ← Terug naar {view === 'verify' ? 'registreren' : 'inloggen'}
+            ← Back
           </button>
         </div>
       </div>
@@ -213,8 +240,9 @@ export default function Auth() {
   // ── Main auth screens (Login, Register, Forgot Password, Admin) ────────────
   return (
     <div className="min-h-screen bg-[#F9FAFB] flex flex-col items-center justify-center p-6">
-      <div className="max-w-md w-full bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
-
+      
+      {/* ── Main Auth Block ── */}
+      <div className="max-w-md w-full bg-white p-8 rounded-2xl shadow-sm border border-gray-100 z-10">
         <div className="flex justify-center mb-6">
           {isAdmin ? (
             <div className="w-12 h-12 rounded-xl bg-red-600 flex items-center justify-center">
@@ -226,9 +254,9 @@ export default function Auth() {
         </div>
 
         <h2 className="text-2xl font-bold text-center text-[#0C3C4C] mb-6">
-          {isAdmin ? 'Admin Portal Login' : 
-           view === 'login' ? 'Welcome Back' : 
-           view === 'forgot-password' ? 'Wachtwoord vergeten' : 'Account aanmaken'}
+          {isAdmin ? 'Admin Login' : 
+           view === 'login' ? 'Portal Login' : 
+           view === 'forgot-password' ? 'Forgot Password' : 'Company Registration'}
         </h2>
 
         {error && <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm mb-4 border border-red-100">{error}</div>}
@@ -241,49 +269,38 @@ export default function Auth() {
               className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${view === 'login' ? 'bg-white shadow-sm text-[#0C3C4C]' : 'text-gray-500'}`}
               onClick={() => switchView('login')}
             >
-              Inloggen
+              Log in
             </button>
             <button
               type="button"
               className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${view === 'register' ? 'bg-white shadow-sm text-[#0C3C4C]' : 'text-gray-500'}`}
               onClick={() => switchView('register')}
             >
-              Registreren
+              Register
             </button>
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {view === 'register' && (
-            <>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Volledige naam</label>
-                <input
-                  type="text" value={name} onChange={e => setName(e.target.value)} required
-                  className="w-full p-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0C3C4C]/20"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Account type</label>
-                <select
-                  value={role} onChange={e => setRole(e.target.value as 'b2c' | 'b2b')}
-                  className="w-full p-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0C3C4C]/20"
-                >
-                  <option value="b2c">Expat (B2C)</option>
-                  <option value="b2b">Corporate (B2B)</option>
-                </select>
-              </div>
-            </>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Company Name</label>
+              <input
+                type="text" value={name} onChange={e => setName(e.target.value)} required
+                className="w-full p-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0C3C4C]/20"
+                placeholder="e.g. Tech Corp B.V."
+              />
+            </div>
           )}
 
           {view === 'forgot-password' && (
             <p className="text-sm text-gray-500 text-center mb-4">
-              Vul je e-mailadres in. We sturen je een code om je wachtwoord te resetten.
+              Enter your email address. We will send you a code to reset your password.
             </p>
           )}
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">E-mailadres</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
             <input
               type="email" value={email} onChange={e => setEmail(e.target.value)} required
               className="w-full p-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0C3C4C]/20"
@@ -293,10 +310,10 @@ export default function Auth() {
           {(view === 'login' || view === 'register' || view === 'admin') && (
             <div>
               <div className="flex justify-between items-center mb-1">
-                <label className="block text-sm font-medium text-gray-700">Wachtwoord</label>
+                <label className="block text-sm font-medium text-gray-700">Password</label>
                 {view === 'login' && (
                   <button type="button" onClick={() => switchView('forgot-password')} className="text-xs text-[#0C3C4C] hover:underline">
-                    Wachtwoord vergeten?
+                    Forgot password?
                   </button>
                 )}
               </div>
@@ -305,7 +322,7 @@ export default function Auth() {
                 className="w-full p-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0C3C4C]/20"
                 required minLength={view === 'register' ? 8 : undefined}
               />
-              {view === 'register' && <p className="text-xs text-gray-400 mt-1">Minimaal 8 tekens</p>}
+              {view === 'register' && <p className="text-xs text-gray-400 mt-1">Minimum 8 characters</p>}
             </div>
           )}
 
@@ -313,10 +330,10 @@ export default function Auth() {
             type="submit" disabled={loading}
             className={`w-full text-white py-2 rounded-lg font-medium mt-2 transition-colors disabled:opacity-60 ${isAdmin ? 'bg-red-600 hover:bg-red-700' : 'bg-[#0C3C4C] hover:bg-[#0a2f3b]'}`}
           >
-            {loading ? 'Bezig...' : 
-             view === 'register' ? 'Account aanmaken' : 
-             view === 'forgot-password' ? 'Stuur code' :
-             'Inloggen'}
+            {loading ? 'Loading...' : 
+             view === 'register' ? 'Register Company' : 
+             view === 'forgot-password' ? 'Send code' :
+             'Log in'}
           </button>
         </form>
 
@@ -325,17 +342,34 @@ export default function Auth() {
             type="button" onClick={() => switchView('login')}
             className="w-full mt-4 text-sm text-gray-400 hover:text-gray-600 transition-colors"
           >
-            ← Terug naar inloggen
+            ← Back to log in
           </button>
         )}
       </div>
 
+      {/* ── B2C Redirection Block (ONLY visible during registration) ── */}
+      {view === 'register' && (
+        <div className="max-w-md w-full mt-6 bg-[#0C3C4C]/5 border border-[#0C3C4C]/10 rounded-2xl p-5 flex items-center justify-between">
+          <div>
+            <h4 className="text-sm font-bold text-[#0C3C4C]">Are you an expat (B2C)?</h4>
+            <p className="text-xs text-gray-600 mt-0.5">Fill in your intake form directly here.</p>
+          </div>
+          <button 
+            onClick={() => window.location.href = '/intake'} // Pas deze route aan naar jouw B2C intake pagina
+            className="bg-white border border-gray-200 text-[#0C3C4C] text-sm font-medium px-4 py-2 rounded-lg shadow-sm hover:bg-gray-50 flex items-center gap-2 transition-colors shrink-0 ml-4"
+          >
+            Go to intake <ArrowRight size={14} />
+          </button>
+        </div>
+      )}
+
+      {/* ── Admin Toggle ── */}
       {(view === 'login' || view === 'admin') && (
         <button
           type="button" onClick={() => switchView(isAdmin ? 'login' : 'admin')}
-          className="mt-6 text-sm text-gray-400 hover:text-gray-600 transition-colors"
+          className="mt-6 text-xs font-medium text-gray-400 hover:text-gray-600 transition-colors"
         >
-          {isAdmin ? '← Terug naar normale login' : 'Admin portal login'}
+          {isAdmin ? '← Back to portal login' : 'Admin portal login'}
         </button>
       )}
     </div>
