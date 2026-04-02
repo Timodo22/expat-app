@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { authClient, API_URL } from './lib/authClient';
+import { AdminB2BPartners } from './pages/Admin';
+import { AdminDocuments } from './pages/Admin';
 
 // Pagina imports
 import Landing from './pages/Landing';
@@ -119,6 +121,17 @@ export default function App() {
         <Route path="/admin/agenda" element={
           <ProtectedRoute allowedRoles={['admin']}>
             <AdminAgenda />
+          </ProtectedRoute>
+        } />
+                {/* ZIE HIER: De nieuwe Agenda route toegevoegd! */}
+        <Route path="/admin/documents" element={
+          <ProtectedRoute allowedRoles={['admin']}>
+            <AdminDocuments />
+          </ProtectedRoute>
+        } />
+                <Route path="/admin/b2b" element={
+          <ProtectedRoute allowedRoles={['admin']}>
+            <AdminB2BPartners />
           </ProtectedRoute>
         } />
 
